@@ -25,7 +25,11 @@ mod guard;
 pub mod lisp;
 pub mod mtext_edit;
 pub mod pointmod;
+// The host product's name in messages, where an embedding host sets one.
+pub mod product;
 pub mod prompt;
+// Host read-only: an embedding host can make the drawings read-only.
+pub mod read_only;
 mod recent;
 pub mod render_look;
 pub mod sample;
@@ -252,7 +256,7 @@ impl Session {
 
     /// Message on the command line history.
     pub fn echo(&mut self, msg: impl Into<String>) {
-        let m = msg.into();
+        let m = product::rebrand_owned(msg.into());
         log::debug!("{m}");
         self.log.push(m);
         if self.log.len() > 5000 {

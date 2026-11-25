@@ -1,0 +1,176 @@
+# Build the render server (apps/cadcraft-render-server) for Linux x64, Windows x64 and macOS (Apple silicon) on
+# GitHub-hosted runners, and check it on each: one offscreen frame to PNG (--snapshot) and a short stream session driven
+# like a host drives it (scripts/stream_smoke.py). Runs on pushes to main or by hand (artifacts only), and on a pushed tag
+# render-server-v<version>, which also publishes a GitHub Release. <version> is the CADCraft version the program is built
+# from, with a build number: render-server-v0.20.1-1. The binary must report that CADCraft version or nothing is released.
+# Release assets (each archive holds one folder with the binary, <binary>.sha256 and the licence files):
+#   cadcraft-render-server-<version>-linux-x64.tar.gz
+#   cadcraft-render-server-<version>-windows-x64.zip
+#   cadcraft-render-server-<version>-macos-arm64.tar.gz
+#   SHA256SUMS.txt
+name: cadz-render-server
+on:
+  push:
+    branches: [main]
+    tags: ['render-server-v*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cadz-render-server-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux-x64, exe: '', adapter: software, tests: true }
+          - { os: windows-2025, target: windows-x64, exe: '.exe', adapter: software, tests: false }
+          - { os: macos-15, target: macos-arm64, exe: '', adapter: auto, tests: false }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    env:
+      CARGO_PROFILE_RELEASE_LTO: 'false'
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '256'
+      CARGO_PROFILE_RELEASE_INCREMENTAL: 'false'
+      CARGO_PROFILE_RELEASE_STRIP: 'symbols'
+      CARGO_TERM_COLOR: never
+      # the C runtime linked in: a machine without the VC++ redistributable can start the program
+      CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
+    steps:
+      - uses: actions/checkout@v4
+      - name: system packages (Linux; lavapipe is the software Vulkan device the checks draw with)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev libudev-dev mesa-vulkan-drivers libvulkan1 > /dev/null
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+          cache-on-failure: true
+      # Cargo.lock gains this package (and nothing else moves): written here, checked, kept as an artifact.
+      - name: lock file
+        shell: bash
+        run: |
+          cargo metadata --format-version 1 > /dev/null
+          git diff --stat -- Cargo.lock
+          # only additions (this package's entry): a removed line would be another crate moving
+          if git diff -U0 -- Cargo.lock | grep -E '^-[^-]' ; then echo "Cargo.lock would move other crates"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: matrix.tests
+        with:
+          name: cargo-lock
+          path: Cargo.lock
+          retention-days: 14
+      - name: build
+        shell: bash
+        run: |
+          start=$(date +%s)
+          cargo build -p cadcraft-render-server --release
+          BIN=target/release/cadcraft-render-server${{ matrix.exe }}
+          echo "build_seconds=$(( $(date +%s) - start ))"
+          echo "bytes=$(wc -c < "$BIN")"
+          "$BIN" --version
+      - name: tests (protocol, pickers, brand)
+        if: matrix.tests
+        shell: bash
+        run: cargo test -p cadcraft-render-server --release
+      - name: smoke (one offscreen frame)
+        shell: bash
+        run: |
+          BIN=target/release/cadcraft-render-server${{ matrix.exe }}
+          CADCRAFT_RENDER_LOG=info "$BIN" --snapshot smoke-out --frames 1 --size 1280x800 --lang en --adapter ${{ matrix.adapter }} > smoke-out.log 2>&1 \
+            || { echo "exit $?"; cat smoke-out.log; exit 1; }
+          ls smoke-out | grep -q '^frame-0001.png$' || { echo "no frame written"; cat smoke-out.log; exit 1; }
+          grep -i -E 'graphics|adapter' smoke-out.log | head -3 || true
+          cat smoke-out/frames.json | head -20
+      - name: smoke (stream session)
+        shell: bash
+        run: |
+          BIN=target/release/cadcraft-render-server${{ matrix.exe }}
+          PY=$(command -v python3 || command -v python)
+          "$PY" apps/cadcraft-render-server/scripts/stream_smoke.py "$BIN" stream-out --adapter ${{ matrix.adapter }} \
+            || { tail -40 stream-out/render-server.log; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.target }}
+          path: |
+            smoke-out
+            smoke-out.log
+            stream-out
+          retention-days: 14
+      - name: third-party licences
+        shell: bash
+        run: |
+          PY=$(command -v python3 || command -v python)
+          "$PY" apps/cadcraft-render-server/scripts/third_party_licences.py THIRD-PARTY-LICENSES.txt
+      - name: archive
+        shell: bash
+        env:
+          COPYFILE_DISABLE: '1'
+        run: |
+          exe=cadcraft-render-server${{ matrix.exe }}
+          said=$("target/release/$exe" --version 2>&1)        # "cadcraft-render-server 0.20.1 (protocol 1)"
+          upstream=$(echo "$said" | awk '{print $2}')
+          if [[ "$GITHUB_REF" == refs/tags/render-server-v* ]]; then
+            version=${GITHUB_REF_NAME#render-server-v}
+            [ "${version%%-*}" = "$upstream" ] || { echo "tag $GITHUB_REF_NAME, but the binary says: $said"; exit 1; }
+          else
+            version="$upstream-g${GITHUB_SHA::7}"
+          fi
+          name=cadcraft-render-server-$version-${{ matrix.target }}
+          mkdir -p "dist/$name"
+          cp "target/release/$exe" "dist/$name/"
+          (cd "dist/$name" && (sha256sum "$exe" 2>/dev/null || shasum -a 256 "$exe") > "$exe.sha256")
+          cp LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md THIRD-PARTY-LICENSES.txt "dist/$name/"
+          cp apps/cadcraft-render-server/NOTICE "dist/$name/NOTICE-render-server"
+          cp apps/cadcraft-render-server/PROTOCOL.md "dist/$name/"
+          cd dist
+          if [ -n "${{ matrix.exe }}" ]; then 7z a -tzip -bd "$name.zip" "$name" > /dev/null; else tar -czf "$name.tar.gz" "$name"; fi
+          rm -rf "$name"
+          ls -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-${{ matrix.target }}
+          path: dist/*
+          compression-level: 0
+          retention-days: 14
+
+  # Only for a tag, only when every build passed; the one job that may write to the repository.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/render-server-v')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+      - name: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          cd dist
+          version=${TAG#render-server-v}
+          files=("cadcraft-render-server-$version-linux-x64.tar.gz" "cadcraft-render-server-$version-windows-x64.zip" "cadcraft-render-server-$version-macos-arm64.tar.gz")
+          for f in "${files[@]}"; do [ -s "$f" ] || { echo "missing $f"; ls -l; exit 1; }; done
+          sha256sum "${files[@]}" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          {
+            echo "cadcraft-render-server $version, built from $GITHUB_SHA by run $GITHUB_RUN_ID."
+            echo
+            echo "CADCraft v${version%%-*}'s editing UI drawn offscreen and streamed to an embedding host (wire protocol v1, PROTOCOL.md)."
+            echo "Targets: Linux x64, Windows x64, macOS on Apple silicon (arm64). Each archive holds the binary, its sha256, PROTOCOL.md"
+            echo "and the licence files (LICENSE-MIT, LICENSE-APACHE, NOTICE, NOTICE-render-server, ATTRIBUTION.md, THIRD-PARTY-LICENSES.txt)."
+          } > notes.md
+          gh release create "$TAG" "${files[@]}" SHA256SUMS.txt -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes-file notes.md

@@ -332,7 +332,8 @@ fn catalog(language: &str) -> Option<&'static Catalog<'static>> {
 }
 
 pub fn tr<'a>(language: &str, source: &'a str) -> &'a str {
-    catalog(language).and_then(|c| c.get(&("", source))).copied().unwrap_or(source)
+    // An embedding host's product name where the text names CADCraft (unset: unchanged).
+    cadcraft_engine::product::rebrand(catalog(language).and_then(|c| c.get(&("", source))).copied().unwrap_or(source))
 }
 
 pub fn t(source: &str) -> &str {
@@ -342,7 +343,10 @@ pub fn t(source: &str) -> &str {
 /// Menu headings can differ from command or object labels (e.g. Czech Kótování / Kóta).
 /// Catalogs without a `menu` entry retain their ordinary translation.
 pub fn tr_menu<'a>(language: &str, source: &'a str) -> &'a str {
-    catalog(language).and_then(|c| c.get(&("menu", source))).copied().unwrap_or_else(|| tr(language, source))
+    match catalog(language).and_then(|c| c.get(&("menu", source))).copied() {
+        Some(menu) => cadcraft_engine::product::rebrand(menu),
+        None => tr(language, source),
+    }
 }
 
 pub fn menu(source: &str) -> &str {

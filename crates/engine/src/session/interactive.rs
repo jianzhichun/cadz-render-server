@@ -364,6 +364,18 @@ impl Session {
         // A typed selection mode or SIngle never outlives its command.
         self.select_mode = None;
         self.select_single = false;
+        // Host read-only: what the command drew is put back, and the reason said.
+        if let Some(why) = crate::read_only::reason()
+            && let Ok(st) = self.state_mut()
+            && !Arc::ptr_eq(&run.before, &st.doc)
+        {
+            st.doc = run.before;
+            st.selection = run.selection_before;
+            st.revision += 1;
+            self.pending_window = None;
+            self.echo(EngineError::Disabled(run.id, why).to_string());
+            return;
+        }
         if find_command(&run.id).is_some_and(|c| c.undoable)
             && let Err(e) = self.refuse_non_finite(None, &run.before, &run.selection_before, &run.id)
         {

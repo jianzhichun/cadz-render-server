@@ -49,6 +49,7 @@ pub const TABLE: &[(&str, Class)] = &[
     // apps and tooling
     ("cadcraft", Class::Exempt),
     ("cli", Class::Exempt),
+    ("render-server", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
 ];

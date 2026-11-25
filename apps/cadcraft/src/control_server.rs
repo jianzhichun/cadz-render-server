@@ -72,13 +72,20 @@ pub fn start(port: u16, ctx: egui::Context) -> Receiver<ControlRequest> {
             if let Ok(path) = cadcraft_mcp::control_token::token_path(port) {
                 log::info!("control server listening on 127.0.0.1:{port} (token in {})", path.display());
             }
-            serve_listener(l, Limits::default(), ctx, token)
+            serve_bound(l, ctx, token)
         }
         Err(e) => {
             log::error!("control server failed to bind 127.0.0.1:{port}: {e}");
             sync_channel::<ControlRequest>(0).1
         }
     }
+}
+
+/// Serve an already bound loopback `listener` with `token` under the default limits; requests
+/// arrive on the returned receiver. For a host that picks the port and the token itself (an
+/// embedding host starting the editor on a free port).
+pub fn serve_bound(listener: TcpListener, ctx: egui::Context, token: Arc<String>) -> Receiver<ControlRequest> {
+    serve_listener(listener, Limits::default(), ctx, token)
 }
 
 /// How long the accepting thread waits after a failed accept. Accepting can keep failing, for
