@@ -145,6 +145,12 @@ pub fn is_ui_command(id: &str) -> bool {
     UI_COMMANDS.iter().any(|c| c.0 == id)
 }
 
+/// UI commands an editor shown under an embedding host's product name leaves out: CADCraft's own
+/// update check would look for and offer CADCraft releases.
+fn hosted_leaves_out(id: &str) -> bool {
+    cadcraft_engine::product::hosted().is_some() && id == "ui.updates.check"
+}
+
 /// Run a UI-only command. `None` if `id` isn't one.
 pub fn run_ui_command(app: &mut CadApp, id: &str, params: &Value) -> Option<Result<Value, String>> {
     crate::i18n::with_language(app.language(), || run_ui_command_inner(app, id, params))
@@ -556,6 +562,8 @@ fn run_ui_command_inner(app: &mut CadApp, id: &str, params: &Value) -> Option<Re
             Ok(Value::Null)
         }
         #[cfg(not(target_arch = "wasm32"))]
+        "ui.updates.check" if hosted_leaves_out(id) => Err("Updates come with the product this editor is part of.".to_string()),
+        #[cfg(not(target_arch = "wasm32"))]
         "ui.updates.check" => {
             crate::updates_ui::check_now(app);
             Ok(Value::Null)
@@ -733,7 +741,7 @@ pub fn tree(app: &CadApp) -> Vec<(String, Vec<Entry>)> {
         }
     }
     for (id, label, menu, sc) in UI_COMMANDS {
-        if !menu.is_empty() {
+        if !menu.is_empty() && !hosted_leaves_out(id) {
             // The UCS icon is a setting of the drawing: off the menu's reach when none is open.
             let enabled = !id.starts_with("ui.toggle.ucsicon") || app.session.doc().is_ok();
             add(menu, label, id, *sc, enabled);

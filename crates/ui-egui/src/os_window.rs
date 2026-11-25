@@ -51,7 +51,8 @@ pub const fn name_for(identity: LaunchIdentity) -> &'static str {
 
 /// The drawn caption for the window ([`crate::chrome`]): stable draws its name exactly as before.
 pub fn drawn_name() -> &'static str {
-    name_for(identity())
+    // An embedding host's product name where one is set (the Start page's heading).
+    cadcraft_engine::product::rebrand(name_for(identity()))
 }
 
 /// Whether the stable-only services (updater, control server, agent links) may run this launch.

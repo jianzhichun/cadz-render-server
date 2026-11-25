@@ -682,7 +682,7 @@ fn page_rows(
 ) -> Option<(&'static str, Value)> {
     let mut change = None;
     ui.label("Printer/plotter");
-    craft_ui::ComboBox::from_id_salt(salt.with("device")).selected_text(device_label(page)).width(190.0).show_ui(ui, |ui| {
+    craft_ui::ComboBox::from_id_salt(salt.with("device")).selected_text(cadcraft_engine::product::rebrand(device_label(page))).width(190.0).show_ui(ui, |ui| {
         if ui.selectable_label(device_label(page) == "None", "None").on_hover_text("PDF on the paper chosen below").clicked()
             && device_label(page) != "None"
         {
@@ -690,7 +690,7 @@ fn page_rows(
         }
         for dev in choices.devices.iter() {
             let on = dev.name.eq_ignore_ascii_case(&page.device);
-            if ui.selectable_label(on, &dev.name).on_hover_text(format!("{} ({})", dev.description, dev.output.as_str().to_uppercase())).clicked()
+            if ui.selectable_label(on, cadcraft_engine::product::named(&dev.name).into_owned()).on_hover_text(format!("{} ({})", dev.description, dev.output.as_str().to_uppercase())).clicked()
                 && !on
             {
                 change = Some(("device", json!(dev.name)));

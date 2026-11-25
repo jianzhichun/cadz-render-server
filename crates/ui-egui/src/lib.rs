@@ -817,7 +817,7 @@ impl CadApp {
     }
 
     pub fn set_status(&mut self, s: impl Into<String>) {
-        self.status = Some((s.into(), now_ms()));
+        self.status = Some((cadcraft_engine::product::rebrand_owned(s.into()), now_ms()));
     }
 
     /// Cancel queued/in-flight screenshots (host exit). Late callbacks write nothing.

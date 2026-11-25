@@ -866,6 +866,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "cadcraft-render-server"
+version = "0.21.0"
+dependencies = [
+ "arboard",
+ "cadcraft-engine",
+ "cadcraft-io",
+ "cadcraft-mcp",
+ "cadcraft-ui-egui",
+ "egui",
+ "egui-wgpu",
+ "image",
+ "log",
+ "pollster 1.0.1",
+ "rayon",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "cadcraft-ui-egui"
 version = "0.21.0"
 dependencies = [
