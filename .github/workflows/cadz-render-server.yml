@@ -39,7 +39,7 @@ jobs:
       # the C runtime linked in: a machine without the VC++ redistributable can start the program
       CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: system packages (Linux; lavapipe is the software Vulkan device the checks draw with)
         if: runner.os == 'Linux'
         run: |
@@ -59,7 +59,7 @@ jobs:
           git diff --stat -- Cargo.lock
           # only additions (this package's entry): a removed line would be another crate moving
           if git diff -U0 -- Cargo.lock | grep -E '^-[^-]' ; then echo "Cargo.lock would move other crates"; exit 1; fi
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: matrix.tests
         with:
           name: cargo-lock
@@ -94,7 +94,7 @@ jobs:
           PY=$(command -v python3 || command -v python)
           "$PY" apps/cadcraft-render-server/scripts/stream_smoke.py "$BIN" stream-out --adapter ${{ matrix.adapter }} \
             || { tail -40 stream-out/render-server.log; exit 1; }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: smoke-${{ matrix.target }}
@@ -133,7 +133,7 @@ jobs:
           if [ -n "${{ matrix.exe }}" ]; then 7z a -tzip -bd "$name.zip" "$name" > /dev/null; else tar -czf "$name.tar.gz" "$name"; fi
           rm -rf "$name"
           ls -l
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: archive-${{ matrix.target }}
           path: dist/*
@@ -149,7 +149,7 @@ jobs:
     permissions:
       contents: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v8
         with:
           pattern: archive-*
           path: dist
