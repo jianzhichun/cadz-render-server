@@ -67,15 +67,6 @@ pub fn issue(port: u16) -> io::Result<String> {
     Ok(token)
 }
 
-/// Write `token`, chosen by the caller (an embedding host that hands the same token to the
-/// bridge), to [`token_path`] with owner-only permissions, as [`issue`] writes a fresh one.
-pub fn issue_given(port: u16, token: &str) -> io::Result<()> {
-    if token.trim().is_empty() {
-        return Err(io::Error::new(io::ErrorKind::InvalidInput, "empty control token"));
-    }
-    issue_at(&token_path(port)?, token.as_bytes())
-}
-
 /// Create missing parent directories, then write the session token through the platform privacy helper.
 fn issue_at(path: &std::path::Path, bytes: &[u8]) -> io::Result<()> {
     if let Some(parent) = path.parent() {

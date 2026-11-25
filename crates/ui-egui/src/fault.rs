@@ -98,9 +98,9 @@ fn notice(app: &mut CadApp, ctx: &egui::Context) {
         .anchor(egui::Align2::CENTER_TOP, vec2(0.0, 48.0))
         .show(ctx, |ui| {
             ui.set_width(440.0);
-            ui.label(cadcraft_engine::product::rebrand("Part of CADCraft failed, and the app kept running."));
+            ui.label("Part of CADCraft failed, and the app kept running.");
             ui.label(saved_text(app.fault.autosaved));
-            ui.label(RichText::new(cadcraft_engine::product::rebrand("Save your work and restart CADCraft.")).strong());
+            ui.label(RichText::new("Save your work and restart CADCraft.").strong());
             ui.add_space(4.0);
             details(ui, t, &message);
             // A row just as tall as the button (a plain right-to-left layout takes the rest).
@@ -118,14 +118,14 @@ fn notice(app: &mut CadApp, ctx: &egui::Context) {
 /// All that's left once the interface keeps panicking.
 fn broken_window(app: &CadApp, ctx: &egui::Context) {
     let t = Tokens::get();
-    egui::Window::new(cadcraft_engine::product::rebrand("CADCraft has to close"))
+    egui::Window::new("CADCraft has to close")
         .id(egui::Id::unique("cc_fault_broken"))
         .collapsible(false)
         .resizable(false)
         .anchor(egui::Align2::CENTER_CENTER, vec2(0.0, 0.0))
         .show(ctx, |ui| {
             ui.set_width(440.0);
-            ui.label(cadcraft_engine::product::rebrand("Part of CADCraft keeps failing, so it can't continue."));
+            ui.label("Part of CADCraft keeps failing, so it can't continue.");
             ui.label(saved_text(app.fault.autosaved));
             ui.label(RichText::new("Drawing Recovery offers them at the next start.").strong());
             ui.add_space(4.0);
@@ -133,7 +133,7 @@ fn broken_window(app: &CadApp, ctx: &egui::Context) {
                 details(ui, t, message);
             }
             ui.allocate_ui_with_layout(vec2(ui.available_width(), 0.0), egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button(cadcraft_engine::product::rebrand("Close CADCraft")).clicked() {
+                if ui.button("Close CADCraft").clicked() {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Close);
                 }
             });

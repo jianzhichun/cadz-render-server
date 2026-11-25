@@ -34,7 +34,6 @@ impl Class {
 /// prefix.
 pub const TABLE: &[(&str, Class)] = &[
     ("geom", Class::Layer(0)),
-    ("dxf", Class::Standalone),
     ("dwg", Class::Standalone),
     ("color", Class::Layer(0)),
     ("doc", Class::Layer(1)),
@@ -49,7 +48,6 @@ pub const TABLE: &[(&str, Class)] = &[
     // apps and tooling
     ("cadcraft", Class::Exempt),
     ("cli", Class::Exempt),
-    ("render-server", Class::Exempt),
     ("web", Class::Exempt),
     ("xtask", Class::Exempt),
 ];

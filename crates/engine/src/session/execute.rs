@@ -24,13 +24,14 @@ impl Session {
         }
     }
 
+    /// Run a command by id, unless the automation roots, its own state or the block editor refuse it.
     fn execute_guarded(&mut self, id: &str, params: &Value) -> Result<Value> {
         let spec = find_command(id).ok_or_else(|| EngineError::UnknownCommand(id.to_string()))?;
-        (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
-        if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
+        if let Some(why) = crate::file_access::commands::refusal(spec.id) {
             return Err(EngineError::Disabled(spec.id.into(), why));
         }
-        if let Some(why) = crate::read_only::refuses(spec.id) {
+        (spec.enabled)(self).map_err(|m| EngineError::Disabled(spec.id.into(), m))?;
+        if let Some(why) = cmd::blocks::bedit::refused_in_editor(self, spec.id) {
             return Err(EngineError::Disabled(spec.id.into(), why));
         }
         let before = self.state().ok().map(|s| (s.doc.clone(), s.selection.clone(), s.uid));
@@ -55,17 +56,6 @@ impl Session {
                 return Err(EngineError::Internal(id.into(), msg));
             }
         };
-        // Host read-only: a change is put back before anything records it, and refused.
-        if let Some(why) = crate::read_only::reason()
-            && let Some((doc, sel, uid)) = &before
-            && let Some(st) = self.docs.iter_mut().find(|d| d.uid == *uid)
-            && !Arc::ptr_eq(doc, &st.doc)
-        {
-            st.doc = doc.clone();
-            st.selection = sel.clone();
-            st.revision += 1;
-            return Err(EngineError::Disabled(spec.id.into(), why));
-        }
         let violation = before.as_ref().and_then(|b| cmd::blocks::refedit::after_command(self, &b.0, spec.id));
         let result = match (violation, result) {
             (Some(m), Ok(_)) => Err(EngineError::Other(m)),
