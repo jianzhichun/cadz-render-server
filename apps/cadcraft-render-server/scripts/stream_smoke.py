@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """A short stream session against the render server, as a host would run it (PROTOCOL.md):
-hello -> policy/resize/visible -> ready -> frame -> a control request on the same session -> a
+hello -> policy/resize/visible -> ready -> frame -> a control request on the same session -> the
+automation roots holding the control channel (a save outside the write root refused, no file) -> a
 click from the page -> a frame that read it -> (with --cli) the MCP bridge, `cadcraft-cli mcp
 --connect`, drawing on the same session -> Save As from the menu answered over the wire -> stop ->
 bye. Standard library only. Exit 0 when every step held; the frames it got go to OUT.
@@ -123,7 +124,12 @@ def main():
     env = dict(os.environ, CADCRAFT_RENDER_TOKEN=render_token, CADCRAFT_CONTROL_TOKEN=control_token, CADCRAFT_RENDER_LOG="info")
     log = open(os.path.join(out, "render-server.log"), "wb")
     w, h = 960, 600
-    args = [binary, "--stream", f"127.0.0.1:{port}", "--session", "smoke", "--size", f"{w}x{h}", "--dpr", "1", "--lang", "en", "--adapter", adapter]
+    # The session is held to these folders; the host's own files (dialog answers) stay allowed.
+    read_root, write_root = os.path.join(os.path.abspath(out), "roots", "read"), os.path.join(os.path.abspath(out), "roots", "write")
+    os.makedirs(read_root, exist_ok=True)
+    os.makedirs(write_root, exist_ok=True)
+    args = [binary, "--stream", f"127.0.0.1:{port}", "--session", "smoke", "--size", f"{w}x{h}", "--dpr", "1", "--lang", "en", "--adapter", adapter,
+            "--automation-read-root", read_root, "--automation-write-root", write_root]
     proc = subprocess.Popen(args, env=env, stdout=log, stderr=subprocess.STDOUT)
     try:
         conn, _ = listener.accept()
@@ -201,6 +207,21 @@ def main():
     print(f"smoke: control ping {pong.get('result')!r}, line drawn, drawing.inspect ok={inspected.get('ok')}")
     after_line, payload = wait_for(lambda m: m.get("k") == "frame", "a frame after the control request")
     print(f"smoke: frame {after_line['seq']} after the control request ({len(after_line['rects'])} rects)")
+
+    # The automation roots: the control channel cannot write outside the write root, inside it can.
+    escape = os.path.join(os.path.abspath(out), "escape.dxf")
+    refused = ctl.call("engine.execute", {"command": "saveas", "params": {"path": escape}})
+    if refused.get("ok") or os.path.exists(escape):
+        fail(f"a save outside the write root was not refused: {refused}, file exists={os.path.exists(escape)}", proc)
+    shot = os.path.join(os.path.abspath(out), "escape.png")
+    refused_shot = ctl.call("ui.screenshot", {"path": shot})
+    if refused_shot.get("ok") or os.path.exists(shot):
+        fail(f"a screenshot outside the write root was not refused: {refused_shot}", proc)
+    inside = os.path.join(write_root, "inside.dxf")
+    saved = ctl.call("engine.execute", {"command": "saveas", "params": {"path": inside}})
+    if not saved.get("ok") or not os.path.isfile(inside):
+        fail(f"a save inside the write root failed: {saved}", proc)
+    print(f"smoke: roots hold: save outside refused ({refused.get('error', '')[:90]}), screenshot outside refused, save inside written")
 
     # One click from the page, in the drawing area: the frame that read it says so.
     x, y = w * 0.55, h * 0.45

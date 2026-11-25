@@ -19,6 +19,11 @@ Changes against that commit:
 - changed: crates/ui-egui (the interface's catalogs, status line, Start page heading and fault
   notices under a host product's name; About without CADCraft's credits and links and no update check under one; the Plot
   dialog's device names as shown)
+- changed: crates/engine/src/file_access.rs (AutomationRoots::grant: one file granted besides the
+  automation roots, for the files a person chooses in the app's own dialogs), and the two control
+  methods that write a file outside a command, ui.screenshot and ui.render with a path
+  (crates/ui-egui/src/capture.rs, crates/ui-egui/src/control.rs), held to the roots where they are
+  in force; this program holds every command of its session to them (--automation-*-root)
 - changed: apps/cadcraft/src/control_server.rs (serve_bound: the server on a port and token the
   caller chose, which this program compiles in) and crates/mcp/src/control_token.rs (issue_given:
   the token file written with a token the caller chose)

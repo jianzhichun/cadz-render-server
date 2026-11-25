@@ -34,7 +34,7 @@ pub mod commands;
 use std::cell::RefCell;
 use std::ffi::OsString;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 /// Read access or write access.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,7 +48,12 @@ pub enum Access {
 pub struct AutomationRoots {
     read: Option<PathBuf>,
     write: Option<PathBuf>,
+    /// Single files granted besides the roots ([`Self::grant`]), resolved as [`Self::check`] resolves.
+    granted: Mutex<Vec<PathBuf>>,
 }
+
+/// Files granted at most ([`AutomationRoots::grant`]): a session's own file dialogs.
+const MAX_GRANTED: usize = 1024;
 
 /// The folder at `path`, which must exist, made absolute with its links followed: what paths are
 /// compared with.
@@ -71,7 +76,28 @@ impl AutomationRoots {
         }
         let read = read.map(|p| open_root(p, Access::Read)).transpose()?;
         let write = write.map(|p| open_root(p, Access::Write)).transpose()?;
-        Ok(Some(Arc::new(Self { read, write })))
+        Ok(Some(Arc::new(Self { read, write, granted: Mutex::new(Vec::new()) })))
+    }
+
+    /// Grant reading and writing the one file at `path` besides the roots: a file the person at
+    /// the app chose in its own file dialog (or the app was started with) is theirs, wherever it
+    /// is, while what automation names stays held to the roots. Only that file: not its folder,
+    /// nor a file beside it. `Err` when the path cannot be resolved, or too many are granted.
+    pub fn grant(&self, path: impl AsRef<Path>) -> Result<(), String> {
+        let target = resolve(path.as_ref(), self)?;
+        let mut granted = self.granted.lock().map_err(|_| "automation grants are unavailable".to_string())?;
+        if !granted.contains(&target) {
+            if granted.len() >= MAX_GRANTED {
+                return Err(format!("automation grants are full ({MAX_GRANTED} files)"));
+            }
+            granted.push(target);
+        }
+        Ok(())
+    }
+
+    /// Whether `target` (resolved) is a granted file.
+    fn is_granted(&self, target: &Path) -> bool {
+        self.granted.lock().is_ok_and(|g| g.iter().any(|f| same(f, target)))
     }
 
     /// The read root, absolute with its links followed.
@@ -98,6 +124,9 @@ impl AutomationRoots {
         let given = given.as_ref();
         let target = resolve(given, self)?;
         let path = given.display();
+        if self.is_granted(&target) {
+            return Ok(());
+        }
         if access == Access::Read {
             let roots = [self.read.as_ref(), self.write.as_ref()];
             if roots.iter().flatten().any(|r| inside(&target, r)) {
@@ -450,6 +479,19 @@ mod tests {
     }
 
     /// A write-only root still permits reads inside it; reads outside both roots are refused.
+    /// A granted file (one the person chose in the app's dialog) may be read and written wherever
+    /// it is; the file beside it stays outside.
+    #[test]
+    fn a_granted_file_passes_and_its_neighbours_dont() {
+        let (base, roots) = folders("granted");
+        let chosen = base.join("outside/chosen.dwg");
+        assert!(roots.check(s(chosen.clone()), Access::Write).is_err(), "not before it is granted");
+        roots.grant(&chosen).unwrap();
+        assert_eq!(roots.check(s(chosen.clone()), Access::Write), Ok(()));
+        assert_eq!(roots.check(s(chosen.clone()), Access::Read), Ok(()));
+        assert!(roots.check(s(base.join("outside/secret.dxf")), Access::Read).is_err(), "only that file");
+    }
+
     #[test]
     fn reads_are_allowed_under_either_root() {
         let (base, _) = folders("either");

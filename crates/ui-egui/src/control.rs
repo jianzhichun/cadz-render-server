@@ -533,6 +533,10 @@ fn handle_request(app: &mut CadApp, ctx: &egui::Context, req: &ControlRequest) -
             #[cfg(not(target_arch = "wasm32"))]
             if let Some(path) = s("path") {
                 let file = std::path::Path::new(&path);
+                // Held to the automation roots where they are in force, as a command's file is.
+                if let Err(e) = cadcraft_engine::file_access::check_write(file) {
+                    return err(e);
+                }
                 let folder = cadcraft_engine::atomic_write::missing_folder(file);
                 if let Err(e) = cadcraft_engine::atomic_write::write_atomic_making_folders(file, &png) {
                     return err(e);

@@ -44,12 +44,26 @@ the page's `input`, `resize`, `visible`, `ack` (unchanged). Everything else is t
 
 ```
 cadcraft-render-server --stream 127.0.0.1:PORT [--session ID] [--size WxH] [--dpr N] [--lang zh] [--theme dark|light] [--open FILE]
+    [--automation-read-root DIR] [--automation-write-root DIR]
 ```
 
 `--lang` is an interface language code (`en`, `zh`, `de`, `fr`, … as CADCraft's Edit ▸ Interface
 Language offers; Chinese needs a CJK font installed on the computer, else the interface stays English).
 `--open FILE` opens a drawing before the first frame (read in the background, as the desktop app
 reads one; the host may also open drawings over the control channel, `app.open {path}`).
+
+`--automation-read-root DIR` / `--automation-write-root DIR` (existing folders; either or both) hold
+**every command of the session** to them with CADCraft's own file confinement
+(`cadcraft_engine::file_access`, the rules `cadcraft-cli mcp --automation-*-root` applies headless):
+the control channel's requests (so the MCP bridge's), typed commands, scripts and LISP, in every pass.
+Reads may lie under either root, writes only under the write root; a command that cannot be held to
+them is refused, and so is a control-channel `ui.screenshot` or `ui.render` with a `path` outside
+the write root. The host's own files stay allowed: each path the host answers an `ask_open` or
+`ask_save` with, and `--open FILE`, is granted (read and write, that one file only), so the user's
+Open, Save and Save As through the host work wherever the host puts them. `app.open {path}` over the
+control channel is held to the roots like any command (it is what the bridge's `open` tool calls):
+a file outside them opens only if the host granted it. A root that does not exist: exit 1 before
+`hello`, the reason on stderr. Without the flags nothing is confined, as upstream's app.
 
 The process has **no settings folder**: nothing of a desktop CADCraft's per-user files (profile,
 preferences, keyboard shortcuts, command aliases, autosave and recovery, LISP support files, logs) is
@@ -64,8 +78,8 @@ port (`ready.controlPort`) and writes the control token where CADCraft's MCP bri
 host starts the unmodified bridge as `cadcraft-cli mcp --connect 127.0.0.1:<controlPort>` (the
 `cadcraft-cli` of the same release, built from the same upstream commit) and the model's calls drive
 the session the user sees. At this commit the bridge refuses `--automation-read-root` /
-`--automation-write-root` together with `--connect` (upstream issue #1585): the files the model's
-commands open or write over the control channel are not confined by the bridge. CADCraft has no port discovery file; a user's own
+`--automation-write-root` together with `--connect` (upstream issue #1585): the render server's own
+`--automation-*-root` flags (above) are what confine the model's commands. CADCraft has no port discovery file; a user's own
 `cadcraft-cli mcp` never finds this process unless given its port. `CADCRAFT_RENDER_LOG=error|warn|info|debug`
 sets stderr's level (default `warn`).
 
@@ -256,7 +270,8 @@ Message kinds, fields, framing, limits, units, frame rules and input events are 
 2. The control token **is** written to a file, the one CADCraft's MCP bridge reads for that port
    (`cadcraft-control-<port>.token`, owner-only, removed at exit): CADCraft's bridge takes its token
    from there only. SolidCraft's bridge takes it from the environment, so that render server writes none.
-3. No `--config-dir` and no settings folder at all; no `--msaa`; `--open` works in stream mode too.
+3. No `--config-dir` and no settings folder at all; no `--msaa`; `--open` works in stream mode too;
+   `--automation-read-root` / `--automation-write-root` confine the session (above).
 4. `ready.samples` is always 1: the drawing area is drawn inside the UI's own pass.
 5. `ask_open.exts` is `[]` for CADCraft's shared Open dialog; `ask_save.exts` lists the drawing types a
    Save As may switch between. `ask_done.ok` is judged by the status line (above).

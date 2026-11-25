@@ -8,6 +8,7 @@ use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use cadcraft_engine::Session;
+use cadcraft_engine::file_access::{self, AutomationRoots};
 use cadcraft_ui_egui::{CadApp, ControlRequest, Services};
 
 use crate::adapters::gpu::Gpu;
@@ -21,6 +22,8 @@ pub struct UiOptions {
     /// An interface language code (`zh`, `en`, `de`, … `crates/ui-egui/src/i18n.rs`).
     pub lang: String,
     pub dark: bool,
+    /// The folders every command of the session is held to; `None`: nothing is confined.
+    pub roots: Option<Arc<AutomationRoots>>,
 }
 
 /// One pass's results the loop acts on.
@@ -46,6 +49,7 @@ pub struct UiHost {
     theme: egui::Theme,
     max_texture_side: usize,
     stencil: Option<egui_wgpu::wgpu::TextureFormat>,
+    roots: Option<Arc<AutomationRoots>>,
     /// Texture changes since the last paint: passes that are not painted (pane hidden) keep
     /// theirs for the next one, as eframe does.
     deltas: egui::TexturesDelta,
@@ -98,6 +102,7 @@ impl UiHost {
         UiHost {
             max_texture_side: gpu.map_or(8192, |g| g.rs.device.limits().max_texture_dimension_2d as usize),
             stencil: gpu.and_then(|g| g.stencil),
+            roots: opts.roots.clone(),
             ctx,
             app,
             started: Instant::now(),
@@ -110,9 +115,21 @@ impl UiHost {
         }
     }
 
-    /// Open the drawing at `path`, read in the background as the desktop does.
+    /// Open the drawing at `path`, read in the background as the desktop does. The host gave it:
+    /// it is granted under the automation roots ([`Self::grant`]), so it can be saved back.
     pub fn open(&mut self, path: &Path) {
+        self.grant(path);
         self.app.open_path(path);
+    }
+
+    /// A file the host gave (a dialog's answer, `--open`): the session may read and write it
+    /// wherever it is, while everything else stays held to the roots.
+    pub fn grant(&self, path: &Path) {
+        if let Some(roots) = &self.roots
+            && let Err(e) = roots.grant(path)
+        {
+            log::warn!("{e}");
+        }
     }
 
     pub fn size(&self) -> FrameSize {
@@ -164,13 +181,17 @@ impl UiHost {
             system_theme: Some(self.theme),
             ..Default::default()
         };
-        self.app.raw_input_hook(&self.ctx, &mut raw);
-        cadcraft_ui_egui::cmdline::capture_tab(&self.ctx, &mut raw);
         let status_before = self.app.status.as_ref().map(|s| s.1);
-        let app = &mut self.app;
-        let out = self.ctx.run_ui(raw, |ui| {
-            app.guarded_logic(ui.ctx());
-            app.guarded_ui(ui);
+        let (app, ctx) = (&mut self.app, &self.ctx);
+        // Every command the pass runs (the control channel's, typed, scripts, LISP) is held to the
+        // automation roots; files the host gave are granted.
+        let out = file_access::confine(self.roots.as_ref(), || {
+            app.raw_input_hook(ctx, &mut raw);
+            cadcraft_ui_egui::cmdline::capture_tab(ctx, &mut raw);
+            ctx.run_ui(raw, |ui| {
+                app.guarded_logic(ui.ctx());
+                app.guarded_ui(ui);
+            })
         });
         let status_changed = self.app.status.as_ref().is_some_and(|(_, at)| Some(*at) != status_before);
         // The host decides when this process ends (`stop`); Quit from the UI or `app.quit` is not it.

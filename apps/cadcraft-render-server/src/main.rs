@@ -52,7 +52,15 @@ fn main() {
     // No settings folder: nothing of the user's own CADCraft (profile, aliases, autosave, LISP
     // support files) is read or written by this process.
     cadcraft_engine::settings_dir::set(None);
-    let ui = UiOptions { lang: options.lang, dark: options.dark };
+    // Held to these folders: every command of the session (cadcraft_engine::file_access).
+    let roots = match cadcraft_engine::file_access::AutomationRoots::new(options.read_root.as_deref(), options.write_root.as_deref()) {
+        Ok(roots) => roots,
+        Err(e) => {
+            eprintln!("cadcraft-render-server: {e}");
+            std::process::exit(stream::EXIT_SETUP);
+        }
+    };
+    let ui = UiOptions { lang: options.lang, dark: options.dark, roots };
     let size = FrameSize::new(options.css.0, options.css.1, options.dpr);
     let code = match options.mode {
         Mode::Stream(addr) => stream::run(StreamArgs { addr, ui, size, adapter: options.adapter, open: options.open }),

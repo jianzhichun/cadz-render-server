@@ -311,6 +311,9 @@ impl Stream {
                 self.schedule.want();
             }
             HostMsg::Answer { ask, path } => {
+                if let Some(p) = &path {
+                    self.ui.grant(std::path::Path::new(p));
+                }
                 self.asks.answer(ask, path);
                 self.schedule.want();
             }

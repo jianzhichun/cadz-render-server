@@ -314,6 +314,10 @@ pub(crate) fn note_identity(app: &mut CadApp, ctx: &egui::Context) {
 pub(crate) fn admit(app: &mut CadApp, ctx: &egui::Context, path: Option<String>, reply: Sender<Value>) {
     note_identity(app, ctx);
     let token = next_token(&mut app.shots);
+    // The file is held to the automation roots where they are in force, as a command's file is.
+    if let Some(Err(e)) = path.as_deref().map(cadcraft_engine::file_access::check_write) {
+        return reject(reply, token, e);
+    }
     let Some(geometry) = app.capture_geometry else {
         return reject(reply, token, "screenshot failed: the window geometry is not known yet");
     };
