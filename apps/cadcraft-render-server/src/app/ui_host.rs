@@ -86,6 +86,8 @@ impl UiHost {
     /// The UI on `gpu` (none: the drawing area on the CPU), its dialogs from `services`, its
     /// control channel's requests on `control`.
     pub fn new(ctx: egui::Context, gpu: Option<&Gpu>, opts: &UiOptions, size: FrameSize, services: Services, control: Receiver<ControlRequest>) -> Self {
+        // The craft-ui runtime has no native window here, as in CADCraft's browser/test hosts.
+        cadcraft_ui_egui::framework::install_headless(&ctx);
         // Detached panels stay inside the pane: there is no OS to give them windows.
         ctx.set_embed_viewports(true);
         let mut app = CadApp::new(Session::empty(), services);
@@ -187,9 +189,10 @@ impl UiHost {
         // automation roots; files the host gave are granted.
         let out = file_access::confine(self.roots.as_ref(), || {
             app.raw_input_hook(ctx, &mut raw);
-            cadcraft_ui_egui::cmdline::capture_tab(ctx, &mut raw);
+            app.before_input(ctx);
             ctx.run_ui(raw, |ui| {
                 app.guarded_logic(ui.ctx());
+                app.close_path(ui.ctx());
                 app.guarded_ui(ui);
             })
         });

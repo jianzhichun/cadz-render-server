@@ -15,7 +15,8 @@ NAMES = ("LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE", "UNLICENSE", "A
 
 
 def run(*args):
-    return subprocess.run(args, check=True, capture_output=True, text=True).stdout
+    # Cargo writes JSON and package metadata as UTF-8, regardless of the Windows console code page.
+    return subprocess.run(args, check=True, capture_output=True, text=True, encoding="utf-8").stdout
 
 
 def licence_files(manifest_dir, root_limit):
