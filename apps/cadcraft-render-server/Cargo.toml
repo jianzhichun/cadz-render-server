@@ -1,0 +1,33 @@
+[package]
+name = "cadcraft-render-server"
+description = "CADCraft's editing UI drawn offscreen (no window) and streamed to an embedding host: frames out, the user's input in, the control channel on the same session"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version = "1.95"
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+cadcraft-engine = { workspace = true }
+cadcraft-ui-egui = { workspace = true }
+# File formats (the engine stays I/O-agnostic) and the DWG worker process, as the desktop app installs them.
+cadcraft-io = { workspace = true }
+# The control token file the MCP bridge (`cadcraft-cli mcp --connect`) reads.
+cadcraft-mcp = { workspace = true }
+egui = { workspace = true }
+egui-wgpu = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+# Frame stripes encoded in parallel, tile rows compared in parallel.
+rayon = { workspace = true }
+# JPEG for large changed regions, PNG for snapshots and the idle refinement (pure Rust).
+image = { workspace = true }
+# The UI's copied text goes to the system clipboard here.
+arboard = { workspace = true }
+# The headless device is opened with egui-wgpu's async setup.
+pollster = "1"
+

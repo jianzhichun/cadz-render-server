@@ -342,9 +342,13 @@ fn about(ctx: &egui::Context, open: &mut bool) {
         .default_size(vec2(820.0, 420.0))
         .collapsible(false)
         .show(ctx, |ui| {
+            // Under an embedding host's product name the window is about that product: CADCraft's
+            // credits, community and website are not shown.
+            let hosted = cadcraft_engine::product::hosted().is_some();
+            let tabs: &[&str] = if hosted { &["About"] } else { &["About", "Contributors", "Models"] };
             let mut tab = ui.data_mut(|d| d.get_temp::<u8>(tab_id)).unwrap_or(0);
             ui.horizontal(|ui| {
-                for (i, l) in ["About", "Contributors", "Models"].iter().enumerate() {
+                for (i, l) in tabs.iter().enumerate() {
                     if ui.selectable_label(tab == i as u8, crate::i18n::t(l)).clicked() {
                         tab = i as u8;
                     }
@@ -353,8 +357,15 @@ fn about(ctx: &egui::Context, open: &mut bool) {
             ui.data_mut(|d| d.insert_temp(tab_id, tab));
             ui.separator();
             match tab {
-                1 => crate::credits::contributors_ui(ui),
-                2 => crate::credits::models_ui(ui),
+                1 if !hosted => crate::credits::contributors_ui(ui),
+                2 if !hosted => crate::credits::models_ui(ui),
+                _ if hosted => {
+                    ui.heading(crate::tl!("CADCraft"));
+                    ui.label(crate::tf!("Version {version}", version = env!("CARGO_PKG_VERSION")));
+                    ui.label(crate::tl!("Computer-aided design and drafting: an open-source, clean-room CAD application written in pure Rust."));
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(crate::tl!("MIT OR Apache-2.0. Not affiliated with Autodesk, Inc.")).small().color(t.text_faint));
+                }
                 _ => {
                     // The channel name, so a Nightly bug report names the channel it came from.
                     ui.heading(crate::os_window::drawn_name());

@@ -1,0 +1,309 @@
+# The CadZ engine pair, both from the one upstream CADCraft commit named in UPSTREAM_COMMIT, for Linux x64, Windows x64 and
+# macOS (Apple silicon) on GitHub-hosted runners:
+#   - the render server (apps/cadcraft-render-server of this repository), checked on each runner: one offscreen frame to
+#     PNG (--snapshot) and a short stream session driven like a host drives it (scripts/stream_smoke.py);
+#   - stock cadcraft-cli, built unmodified from upstream's own tree at that commit (its MCP bridge speaks the control
+#     protocol of the same commit); on Linux the two are then run together (the bridge drawing on the render server's session).
+# Runs on pushes to main or by hand (artifacts only), and on a pushed tag cadz-engine-<first 9 of UPSTREAM_COMMIT>-<n>,
+# which also publishes a GitHub Release (nothing is released when the tag names another commit). Release assets, each
+# archive one folder with the binary, <binary>.sha256, UPSTREAM_COMMIT and the licence files:
+#   cadcraft-render-server-<sha9>-<n>-{linux-x64.tar.gz,windows-x64.zip,macos-arm64.tar.gz}
+#   cadcraft-cli-<sha9>-<n>-{linux-x64.tar.gz,windows-x64.zip,macos-arm64.tar.gz}
+#   SHA256SUMS.txt
+name: cadz-render-server
+on:
+  push:
+    branches: [main]
+    tags: ['cadz-engine-*']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: cadz-render-server-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+env:
+  CARGO_PROFILE_RELEASE_LTO: 'false'
+  CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '256'
+  CARGO_PROFILE_RELEASE_INCREMENTAL: 'false'
+  CARGO_PROFILE_RELEASE_STRIP: 'symbols'
+  CARGO_TERM_COLOR: never
+  # the C runtime linked in: a machine without the VC++ redistributable can start the programs
+  CARGO_TARGET_X86_64_PC_WINDOWS_MSVC_RUSTFLAGS: '-C target-feature=+crt-static'
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux-x64, exe: '', adapter: software, tests: true }
+          - { os: windows-2025, target: windows-x64, exe: '.exe', adapter: software, tests: false }
+          - { os: macos-15, target: macos-arm64, exe: '', adapter: auto, tests: false }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+      - name: system packages (Linux; lavapipe is the software Vulkan device the checks draw with)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev libudev-dev mesa-vulkan-drivers libvulkan1 > /dev/null
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: render-server-${{ matrix.target }}
+          cache-on-failure: true
+      - name: id
+        id: id
+        shell: bash
+        run: |
+          up=$(tr -d ' \r\n' < UPSTREAM_COMMIT)
+          if [[ "$GITHUB_REF" == refs/tags/cadz-engine-* ]]; then
+            id=${GITHUB_REF_NAME#cadz-engine-}
+            [ "${id%%-*}" = "${up::9}" ] || { echo "tag $GITHUB_REF_NAME, but UPSTREAM_COMMIT is $up"; exit 1; }
+          else
+            id="${up::9}-g${GITHUB_SHA::7}"
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      # Cargo.lock holds this package; were it missing, it is added here and nothing else may move.
+      - name: lock file
+        shell: bash
+        run: |
+          cargo metadata --format-version 1 > /dev/null
+          git diff --stat -- Cargo.lock
+          if git diff -U0 -- Cargo.lock | grep -E '^-[^-]' ; then echo "Cargo.lock would move other crates"; exit 1; fi
+      - uses: actions/upload-artifact@v4
+        if: matrix.tests
+        with:
+          name: cargo-lock
+          path: Cargo.lock
+          retention-days: 14
+      - name: build
+        shell: bash
+        run: |
+          start=$(date +%s)
+          cargo build -p cadcraft-render-server --release --locked
+          BIN=target/release/cadcraft-render-server${{ matrix.exe }}
+          echo "build_seconds=$(( $(date +%s) - start ))"
+          echo "bytes=$(wc -c < "$BIN")"
+          "$BIN" --version
+      - name: tests (protocol, dialogs, brand)
+        if: matrix.tests
+        shell: bash
+        run: cargo test -p cadcraft-render-server --release --locked
+      - name: smoke (one offscreen frame)
+        shell: bash
+        run: |
+          BIN=target/release/cadcraft-render-server${{ matrix.exe }}
+          CADCRAFT_RENDER_LOG=info "$BIN" --snapshot smoke-out --frames 1 --size 1280x800 --lang en --adapter ${{ matrix.adapter }} > smoke-out.log 2>&1 \
+            || { echo "exit $?"; cat smoke-out.log; exit 1; }
+          ls smoke-out | grep -q '^frame-0001.png$' || { echo "no frame written"; cat smoke-out.log; exit 1; }
+          grep -i -E 'graphics|adapter' smoke-out.log | head -3 || true
+          head -20 smoke-out/frames.json
+      - name: smoke (stream session)
+        shell: bash
+        run: |
+          BIN=target/release/cadcraft-render-server${{ matrix.exe }}
+          PY=$(command -v python3 || command -v python)
+          "$PY" apps/cadcraft-render-server/scripts/stream_smoke.py "$BIN" stream-out --adapter ${{ matrix.adapter }} \
+            || { tail -40 stream-out/render-server.log; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.target }}
+          path: |
+            smoke-out
+            smoke-out.log
+            stream-out
+          retention-days: 14
+      - name: third-party licences
+        shell: bash
+        run: |
+          PY=$(command -v python3 || command -v python)
+          "$PY" apps/cadcraft-render-server/scripts/third_party_licences.py THIRD-PARTY-LICENSES.txt cadcraft-render-server
+      - name: archive
+        shell: bash
+        env:
+          COPYFILE_DISABLE: '1'
+        run: |
+          exe=cadcraft-render-server${{ matrix.exe }}
+          name=cadcraft-render-server-${{ steps.id.outputs.id }}-${{ matrix.target }}
+          mkdir -p "dist/$name"
+          cp "target/release/$exe" "dist/$name/"
+          (cd "dist/$name" && (sha256sum "$exe" 2>/dev/null || shasum -a 256 "$exe") > "$exe.sha256")
+          cp LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md THIRD-PARTY-LICENSES.txt UPSTREAM_COMMIT "dist/$name/"
+          cp apps/cadcraft-render-server/NOTICE "dist/$name/NOTICE-render-server"
+          cp apps/cadcraft-render-server/PROTOCOL.md "dist/$name/"
+          cd dist
+          if [ -n "${{ matrix.exe }}" ]; then 7z a -tzip -bd "$name.zip" "$name" > /dev/null; else tar -czf "$name.tar.gz" "$name"; fi
+          rm -rf "$name"
+          ls -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-render-server-${{ matrix.target }}
+          path: dist/*
+          compression-level: 0
+          retention-days: 14
+
+  # Stock cadcraft-cli: upstream's tree at UPSTREAM_COMMIT, its own Cargo.lock, nothing of this repository's changes.
+  cli:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux-x64, exe: '' }
+          - { os: windows-2025, target: windows-x64, exe: '.exe' }
+          - { os: macos-15, target: macos-arm64, exe: '' }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            UPSTREAM_COMMIT
+            apps/cadcraft-render-server/scripts
+          sparse-checkout-cone-mode: false
+      - name: id
+        id: id
+        shell: bash
+        run: |
+          up=$(tr -d ' \r\n' < UPSTREAM_COMMIT)
+          if [[ "$GITHUB_REF" == refs/tags/cadz-engine-* ]]; then
+            id=${GITHUB_REF_NAME#cadz-engine-}
+            [ "${id%%-*}" = "${up::9}" ] || { echo "tag $GITHUB_REF_NAME, but UPSTREAM_COMMIT is $up"; exit 1; }
+          else
+            id="${up::9}-g${GITHUB_SHA::7}"
+          fi
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+          echo "sha=$up" >> "$GITHUB_OUTPUT"
+      - uses: actions/checkout@v4
+        with:
+          repository: storytold/cadcraft
+          ref: ${{ steps.id.outputs.sha }}
+          path: upstream
+          persist-credentials: false
+      - name: system packages (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq pkg-config libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxcursor-dev \
+            libxrandr-dev libxi-dev libfontconfig1-dev libfreetype-dev libudev-dev > /dev/null
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cli-${{ matrix.target }}
+          workspaces: upstream -> target
+          cache-on-failure: true
+      - name: build (unmodified)
+        shell: bash
+        working-directory: upstream
+        run: |
+          [ "$(git rev-parse HEAD)" = "${{ steps.id.outputs.sha }}" ] && [ -z "$(git status --porcelain)" ] || { echo "not upstream's tree"; exit 1; }
+          cargo build -p cadcraft-cli --release --locked
+          BIN=target/release/cadcraft-cli${{ matrix.exe }}
+          echo "bytes=$(wc -c < "$BIN")"
+          "$BIN" --version
+      - name: third-party licences
+        shell: bash
+        working-directory: upstream
+        run: |
+          PY=$(command -v python3 || command -v python)
+          "$PY" ../apps/cadcraft-render-server/scripts/third_party_licences.py THIRD-PARTY-LICENSES.txt cadcraft-cli
+      - name: archive
+        shell: bash
+        env:
+          COPYFILE_DISABLE: '1'
+        run: |
+          exe=cadcraft-cli${{ matrix.exe }}
+          name=cadcraft-cli-${{ steps.id.outputs.id }}-${{ matrix.target }}
+          mkdir -p "dist/$name"
+          cp "upstream/target/release/$exe" "dist/$name/"
+          (cd "dist/$name" && (sha256sum "$exe" 2>/dev/null || shasum -a 256 "$exe") > "$exe.sha256")
+          (cd upstream && cp LICENSE-MIT LICENSE-APACHE NOTICE ATTRIBUTION.md THIRD-PARTY-LICENSES.txt "../dist/$name/")
+          cp UPSTREAM_COMMIT "dist/$name/"
+          cd dist
+          if [ -n "${{ matrix.exe }}" ]; then 7z a -tzip -bd "$name.zip" "$name" > /dev/null; else tar -czf "$name.tar.gz" "$name"; fi
+          rm -rf "$name"
+          ls -l
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-cli-${{ matrix.target }}
+          path: dist/*
+          compression-level: 0
+          retention-days: 14
+
+  # The pair together, as CadZ runs them: the stream session again, with the stock bridge drawing on its session.
+  interop:
+    needs: [build, cli]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: apps/cadcraft-render-server/scripts
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*-linux-x64
+          path: dist
+          merge-multiple: true
+      - name: lavapipe
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq mesa-vulkan-drivers libvulkan1 > /dev/null
+      - name: stream session with the MCP bridge
+        run: |
+          cd dist && for a in *.tar.gz; do tar -xzf "$a"; done && cd ..
+          RS=$(ls dist/cadcraft-render-server-*/cadcraft-render-server) CLI=$(ls dist/cadcraft-cli-*/cadcraft-cli)
+          python3 apps/cadcraft-render-server/scripts/stream_smoke.py "$RS" interop-out --adapter software --cli "$CLI" \
+            || { tail -40 interop-out/render-server.log; cat interop-out/mcp-bridge.log || true; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: interop-linux-x64
+          path: interop-out
+          retention-days: 14
+
+  # Only for a tag, only when every build and the interop check passed; the one job that may write to the repository.
+  release:
+    needs: [build, cli, interop]
+    if: startsWith(github.ref, 'refs/tags/cadz-engine-')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: UPSTREAM_COMMIT
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: archive-*
+          path: dist
+          merge-multiple: true
+      - name: release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          up=$(tr -d ' \r\n' < UPSTREAM_COMMIT)
+          cd dist
+          id=${TAG#cadz-engine-}
+          files=()
+          for p in cadcraft-render-server cadcraft-cli; do
+            files+=("$p-$id-linux-x64.tar.gz" "$p-$id-windows-x64.zip" "$p-$id-macos-arm64.tar.gz")
+          done
+          for f in "${files[@]}"; do [ -s "$f" ] || { echo "missing $f"; ls -l; exit 1; }; done
+          sha256sum "${files[@]}" > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+          {
+            echo "CadZ engine $id: cadcraft-render-server and stock cadcraft-cli, both from CADCraft commit $up"
+            echo "(https://github.com/storytold/cadcraft/commit/$up); built from $GITHUB_SHA by run $GITHUB_RUN_ID."
+            echo
+            echo "cadcraft-render-server: the editing UI drawn offscreen and streamed to an embedding host (wire protocol v1, PROTOCOL.md)."
+            echo "cadcraft-cli: upstream's command line and MCP server, unmodified (\`cadcraft-cli mcp --connect\` drives the render server's session)."
+            echo "Targets: Linux x64, Windows x64, macOS on Apple silicon (arm64). Each archive holds the binary, its sha256, UPSTREAM_COMMIT"
+            echo "and the licence files (LICENSE-MIT, LICENSE-APACHE, NOTICE, ATTRIBUTION.md, THIRD-PARTY-LICENSES.txt; the render server"
+            echo "also NOTICE-render-server and PROTOCOL.md)."
+          } > notes.md
+          gh release create "$TAG" "${files[@]}" SHA256SUMS.txt -R "$GITHUB_REPOSITORY" --verify-tag --title "$TAG" --notes-file notes.md
